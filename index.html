@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSS グラデーション ストップ エディター</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  .stop-handle { cursor: ew-resize; user-select: none; }
+  #gradientBar { position: relative; height: 20px; border-radius: 4px; cursor: pointer; }
+  .handle-pin { position: absolute; top: -4px; width: 14px; height: 28px; border: 2px solid white; border-radius: 3px; transform: translateX(-50%); box-shadow: 0 1px 3px rgba(0,0,0,0.4); cursor: ew-resize; }
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4">
+<div class="max-w-3xl mx-auto">
+  <h1 class="text-2xl font-bold mb-4 text-gray-800">CSS グラデーション ストップ エディター</h1>
+
+  <!-- Preview -->
+  <div id="gradientPreview" class="w-full h-32 rounded-lg shadow mb-4 border"></div>
+
+  <!-- Controls -->
+  <div class="bg-white rounded-lg shadow p-4 mb-4">
+    <!-- Type selection -->
+    <div class="flex gap-4 mb-4">
+      <span class="text-sm font-medium text-gray-700">種類:</span>
+      <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="radio" name="gradType" value="linear" checked onchange="updateGradient()" aria-label="linear gradient"> linear</label>
+      <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="radio" name="gradType" value="radial" onchange="updateGradient()" aria-label="radial gradient"> radial</label>
+      <label class="flex items-center gap-1 text-sm cursor-pointer"><input type="radio" name="gradType" value="conic" onchange="updateGradient()" aria-label="conic gradient"> conic</label>
+    </div>
+
+    <!-- Angle/Shape -->
+    <div id="linearControls" class="mb-4">
+      <label for="angleSlider" class="block text-sm font-medium text-gray-700 mb-1">角度: <span id="angleLabel">90</span>°</label>
+      <input id="angleSlider" type="range" min="0" max="360" value="90" oninput="document.getElementById('angleLabel').textContent=this.value; updateGradient();" class="w-full" aria-label="グラデーション角度">
+    </div>
+    <div id="radialControls" class="hidden mb-4">
+      <label for="radialShape" class="block text-sm font-medium text-gray-700 mb-1">形状:</label>
+      <select id="radialShape" class="border rounded px-2 py-1 text-sm" onchange="updateGradient()" aria-label="ラジアルグラデーション形状">
+        <option value="circle">circle</option>
+        <option value="ellipse">ellipse</option>
+      </select>
+    </div>
+
+    <!-- Gradient bar with handles -->
+    <div class="mb-4">
+      <label class="block text-sm font-medium text-gray-700 mb-2">カラーストップ（バーをクリックで追加）:</label>
+      <div id="gradientBar" onclick="addStopFromBar(event)"></div>
+    </div>
+
+    <!-- Stop list -->
+    <div id="stopList" class="space-y-2 mb-4"></div>
+
+    <button onclick="addStop()" class="bg-blue-600 text-white rounded px-4 py-2 text-sm hover:bg-blue-700 mr-2" aria-label="ストップを追加">+ ストップ追加</button>
+  </div>
+
+  <!-- Presets -->
+  <div class="bg-white rounded-lg shadow p-4 mb-4">
+    <h2 class="text-lg font-semibold mb-3 text-gray-700">プリセット</h2>
+    <div class="flex flex-wrap gap-2" id="presetButtons"></div>
+  </div>
+
+  <!-- CSS Output -->
+  <div class="bg-white rounded-lg shadow p-4">
+    <div class="flex justify-between items-center mb-2">
+      <h2 class="text-lg font-semibold text-gray-700">CSS コード</h2>
+      <button onclick="copyCSS()" class="bg-gray-200 text-gray-700 rounded px-3 py-1 text-sm hover:bg-gray-300" aria-label="CSSをコピー">コピー</button>
+    </div>
+    <pre id="cssOutput" class="bg-gray-50 rounded p-3 text-sm font-mono break-all whitespace-pre-wrap text-gray-800"></pre>
+  </div>
+</div>
+
+<script>
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+let stops = [
+  { color: '#ff6b6b', pos: 0 },
+  { color: '#ffd93d', pos: 50 },
+  { color: '#6bcb77', pos: 100 },
+];
+
+const PRESETS = [
+  { name: '夕日', stops: [{color:'#ff4500',pos:0},{color:'#ff8c00',pos:50},{color:'#ffd700',pos:100}], type:'linear', angle:180 },
+  { name: '海', stops: [{color:'#006994',pos:0},{color:'#0099cc',pos:50},{color:'#87ceeb',pos:100}], type:'linear', angle:180 },
+  { name: '森', stops: [{color:'#1a472a',pos:0},{color:'#2d6a4f',pos:50},{color:'#52b788',pos:100}], type:'linear', angle:135 },
+  { name: '夜空', stops: [{color:'#0d0d2b',pos:0},{color:'#191970',pos:50},{color:'#4169e1',pos:100}], type:'linear', angle:180 },
+  { name: '桜', stops: [{color:'#ffb6c1',pos:0},{color:'#ff69b4',pos:50},{color:'#db7093',pos:100}], type:'radial', angle:90 },
+  { name: '虹', stops: [{color:'#ff0000',pos:0},{color:'#ff7f00',pos:16},{color:'#ffff00',pos:33},{color:'#00ff00',pos:50},{color:'#0000ff',pos:67},{color:'#8b00ff',pos:100}], type:'linear', angle:90 },
+];
+
+function buildCSS() {
+  const type = document.querySelector('input[name="gradType"]:checked').value;
+  const sorted = [...stops].sort((a,b) => a.pos - b.pos);
+  const stopStr = sorted.map(s => `${s.color} ${s.pos}%`).join(', ');
+  let css;
+  if (type === 'linear') {
+    const angle = document.getElementById('angleSlider').value;
+    css = `linear-gradient(${angle}deg, ${stopStr})`;
+  } else if (type === 'radial') {
+    const shape = document.getElementById('radialShape').value;
+    css = `radial-gradient(${shape} at center, ${stopStr})`;
+  } else {
+    const angle = document.getElementById('angleSlider').value;
+    css = `conic-gradient(from ${angle}deg, ${stopStr})`;
+  }
+  return css;
+}
+
+function updateGradient() {
+  const type = document.querySelector('input[name="gradType"]:checked').value;
+  document.getElementById('linearControls').classList.toggle('hidden', type === 'radial');
+  document.getElementById('radialControls').classList.toggle('hidden', type !== 'radial');
+
+  const css = buildCSS();
+  document.getElementById('gradientPreview').style.background = css;
+
+  // Update bar
+  const barCSS = [...stops].sort((a,b)=>a.pos-b.pos).map(s=>`${s.color} ${s.pos}%`).join(', ');
+  document.getElementById('gradientBar').style.background = `linear-gradient(90deg, ${barCSS})`;
+
+  // CSS output
+  const lines = [
+    `background: ${css};`,
+    `/* ベンダープレフィックス付き */`,
+    `background: -webkit-${css};`,
+    `background: ${css};`,
+  ];
+  document.getElementById('cssOutput').textContent = lines.join('\n');
+
+  renderStopList();
+  renderHandles();
+}
+
+function renderHandles() {
+  const bar = document.getElementById('gradientBar');
+  // Remove existing handles
+  bar.querySelectorAll('.handle-pin').forEach(h => h.remove());
+  stops.forEach((s, i) => {
+    const pin = document.createElement('div');
+    pin.className = 'handle-pin';
+    pin.style.left = s.pos + '%';
+    pin.style.background = s.color;
+    pin.setAttribute('aria-label', `ストップ${i+1}`);
+    pin.addEventListener('mousedown', startDrag(i));
+    bar.appendChild(pin);
+  });
+}
+
+function startDrag(idx) {
+  return function(e) {
+    e.stopPropagation();
+    const bar = document.getElementById('gradientBar');
+    const rect = bar.getBoundingClientRect();
+    function move(ev) {
+      const x = Math.min(Math.max(0, ev.clientX - rect.left), rect.width);
+      stops[idx].pos = Math.round(x / rect.width * 100);
+      updateGradient();
+    }
+    function up() { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); }
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+    e.preventDefault();
+  };
+}
+
+function addStopFromBar(e) {
+  if (e.target.classList.contains('handle-pin')) return;
+  const bar = document.getElementById('gradientBar');
+  const rect = bar.getBoundingClientRect();
+  const pos = Math.round((e.clientX - rect.left) / rect.width * 100);
+  stops.push({ color: '#888888', pos });
+  updateGradient();
+}
+
+function addStop() {
+  stops.push({ color: '#888888', pos: 50 });
+  updateGradient();
+}
+
+function renderStopList() {
+  const list = document.getElementById('stopList');
+  list.innerHTML = '';
+  stops.forEach((s, i) => {
+    const row = document.createElement('div');
+    row.className = 'flex items-center gap-2 text-sm';
+
+    const colorIn = document.createElement('input');
+    colorIn.type = 'color';
+    colorIn.value = s.color;
+    colorIn.className = 'w-10 h-8 cursor-pointer border rounded';
+    colorIn.setAttribute('aria-label', `ストップ${i+1}の色`);
+    colorIn.oninput = () => { stops[i].color = colorIn.value; updateGradient(); };
+
+    const posIn = document.createElement('input');
+    posIn.type = 'number';
+    posIn.min = '0';
+    posIn.max = '100';
+    posIn.value = s.pos;
+    posIn.className = 'w-20 border rounded px-2 py-1';
+    posIn.setAttribute('aria-label', `ストップ${i+1}の位置`);
+    posIn.oninput = () => { stops[i].pos = parseInt(posIn.value)||0; updateGradient(); };
+
+    const label = document.createElement('span');
+    label.className = 'text-gray-500 flex-1';
+    label.textContent = `ストップ ${i+1}: ${s.color} @ ${s.pos}%`;
+
+    const btn = document.createElement('button');
+    btn.textContent = '削除';
+    btn.className = 'text-red-500 hover:text-red-700 text-xs';
+    btn.setAttribute('aria-label', `ストップ${i+1}を削除`);
+    btn.onclick = () => { if (stops.length > 2) { stops.splice(i,1); updateGradient(); } };
+
+    [colorIn, posIn, label, btn].forEach(el => row.appendChild(el));
+    list.appendChild(row);
+  });
+}
+
+function renderPresets() {
+  const container = document.getElementById('presetButtons');
+  PRESETS.forEach(p => {
+    const stopStr = p.stops.map(s=>`${s.color} ${s.pos}%`).join(', ');
+    const btn = document.createElement('button');
+    btn.className = 'px-3 py-1 text-sm rounded text-white shadow hover:opacity-90 transition';
+    btn.style.background = `linear-gradient(90deg, ${stopStr})`;
+    btn.textContent = p.name;
+    btn.setAttribute('aria-label', `プリセット: ${p.name}`);
+    btn.onclick = () => {
+      stops = p.stops.map(s => ({...s}));
+      const radio = document.querySelector(`input[name="gradType"][value="${p.type}"]`);
+      if (radio) radio.checked = true;
+      if (p.angle !== undefined) document.getElementById('angleSlider').value = p.angle;
+      document.getElementById('angleLabel').textContent = p.angle || 90;
+      updateGradient();
+    };
+    container.appendChild(btn);
+  });
+}
+
+function copyCSS() {
+  const txt = document.getElementById('cssOutput').textContent;
+  navigator.clipboard.writeText(txt);
+  const btn = event.target;
+  btn.textContent = 'コピー済！';
+  setTimeout(() => btn.textContent = 'コピー', 1500);
+}
+
+renderPresets();
+updateGradient();
+</script>
+</body>
+</html>
